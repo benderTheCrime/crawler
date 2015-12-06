@@ -4,6 +4,9 @@ import java.net.MalformedURLException;
 import java.net.URL;
 
 public class Crawler {
+
+    private int activeThreadCount = 0;
+
     public static void main(String args[])
     {
         // TODO The arguments could be many things here, but here are a few 
