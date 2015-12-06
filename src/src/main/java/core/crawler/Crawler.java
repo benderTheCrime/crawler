@@ -30,7 +30,7 @@ public class Crawler {
         }
 
         // Next, we are going to initialize threads
-        
+        // Call a class that extends thread
     }
 
     @SuppressWarnings("unused")
