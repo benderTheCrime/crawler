@@ -36,6 +36,8 @@ public class Crawler {
         // Call a class that extends thread
     }
 
+    // TODO instead of this use a "Thread Broker" that rolls off closed threads and 
+    // initiates new ones
     @SuppressWarnings("unused")
     private Thread initializeThread()
     {
