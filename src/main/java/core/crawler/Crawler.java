@@ -1,45 +1,65 @@
 package core.crawler;
 
+import core.crawler.threading.WorkerThread;
+
 import core.util.MapUtil;
 import core.util.RequestUtil;
-import core.util.ResultUtil;
 
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.util.*;
+import java.util.Date;
+import java.util.Map;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
+
 
 /**
  * Created by josephgroseclose on 12/11/15.
  */
 public class Crawler
 {
+    private static final String MAXIMUM_URL_PATTERN_REACH_KEYWORD = "--reach";
+    private static final String MAXIMUM_WORKER_THREAD_COUNT_KEYWORD = "--threads";
+    private static final String KEYWORDS_KEYWORD = "--keywords";
+    private static final String URL_CONTAINS_MATCH_PATTERN_KEYWORD = "--match";
+
     private static int MAXIMUM_URL_PATTERN_REACH = 5000;
     private static int MAXIMUM_WORKER_THREAD_COUNT = 10;
-    private static int CURRENT_WORKER_THREAD_COUNT = 0;
-    private static final Map<String, Map<String, Integer>> keywordMatchesByURL =
+    private static Set<String> KEYWORDS = new HashSet<String>();
+    private static String URL_CONTAINS_MATCH_PATTERN = null;
+    private static ThreadPoolExecutor executors;
+    private static Map<String, Map<String, Integer>> keywordMatchesByURL =
             new HashMap<String, Map<String, Integer>>();
+    private static final int MAX_COLLECTIVELY_VISITED_URL_COUNT = 300000;
     private static final Map<String, Integer> keywordCountByURL =
             new HashMap<String, Integer>();
-    private static final Map<String, Set<String>> urlsFoundInPageHTMLs =
-            new HashMap<String, Set<String>>();
-    private static final Set<String> urlsFoundCollectively =
+    private static final LinkedList<Set<String>> urlsFoundPendingThreadAssignment =
+            new LinkedList<Set<String>>();
+    private static final Set<String> collectivelyVisistedURLs =
             new HashSet<String>();
 
     public static void main(String args[])
     {
         /*
-        TODO sort output, maximum count of matches across all keywords
         TODO word boundaries
-        TODO number of threads, have to globalize the "stack" and pass off a
-            certain number of urls to each thread
-        // TODO separate concerns
+        TODO string matcher
+        TODO separate concerns
         TODO interface
         TODO api
+        TODO not gracefully shutting down
+        TODO not showing count values
         */
 
+        Date date = new Date();
         Set<String> rootURLs = new HashSet<String>();
         String rootURL;
-        Set<String> keywords;
+        String key;
+        String value;
+        Long minutes;
+        int i;
 
         if (args.length > 0)
         {
@@ -51,118 +71,105 @@ public class Crawler
             throw new IllegalStateException("Missing argument \"rootUrl\"");
         }
 
-        if (args.length > 1)
+        for (i = 1; i < args.length; i += 2)
         {
-            keywords = new HashSet<String>(Arrays.asList(args[1].split(",")));
-        }
-        else
-        {
-            throw new IllegalStateException("Missing argument \"keywords\"");
+            key = args[i];
+            value = args[i + 1];
+
+            switch (key)
+            {
+                case MAXIMUM_URL_PATTERN_REACH_KEYWORD:
+                    MAXIMUM_URL_PATTERN_REACH = Integer.valueOf(value);
+                    break;
+                case MAXIMUM_WORKER_THREAD_COUNT_KEYWORD:
+                    MAXIMUM_WORKER_THREAD_COUNT = Integer.valueOf(value);
+                    break;
+                case KEYWORDS_KEYWORD:
+                    KEYWORDS.addAll(Arrays.asList(value.split(",")));
+                    break;
+                case URL_CONTAINS_MATCH_PATTERN_KEYWORD:
+                    URL_CONTAINS_MATCH_PATTERN = value;
+            }
         }
 
-        if (args.length > 2)
-        {
-            MAXIMUM_URL_PATTERN_REACH = Integer.valueOf(args[2]);
-        }
-
-        if (args.length > 3)
-        {
-            MAXIMUM_WORKER_THREAD_COUNT = Integer.valueOf(args[3]);
-        }
-
-        System.out.println("Root URL            : " + rootURL);
-        System.out.println("Maximum URL Count   : " + MAXIMUM_URL_PATTERN_REACH);
-        System.out.println("Keywords            : " + keywords);
-
+        // Allow cookies based on Chrome's cookie policy
         RequestUtil.setHttpClientCookiePolicy();
 
-        findKeyWordsAndSpiderLinks(rootURLs, keywords);
 
-        // TODO Move this
-        keywordMatchesByURL.forEach((k, v) -> keywordCountByURL
-                .put(k, v.values().stream().mapToInt(Number::intValue).sum()));
+        executors = (ThreadPoolExecutor) Executors.newFixedThreadPool(
+                MAXIMUM_WORKER_THREAD_COUNT);
 
-        System.out.println(MapUtil.sortByValue(keywordCountByURL));
-        System.out.println(keywordMatchesByURL);
-    }
-
-    @SuppressWarnings("unused")
-    private Thread initializeThread()
-    {
-        return null;
-    }
-
-    private static Thread negotiateThreadAssignment()
-    {
-        // Checks to see how many threads are up
-        // Spins up a new thread if one is not active
-        // Closes unused threads
-        // Keeps track of state of threads
-        return null;
-    }
-
-    private static void findKeyWordsAndSpiderLinks(Set<String> urls,
-            Set<String> keywords)
-    {
-        Set<String> urlSet = new HashSet<String>();
-        boolean maximumURLPatternReachMet = false;
-        URL parsedUrl;
-        List results;
-        Map<String, Integer> resultKeywords;
-        Set<String> resultURLs;
-
-        loop:
-        for (String url : urls)
+        urlsFoundPendingThreadAssignment.add(rootURLs);
+        negotiateThreadAssignment(rootURLs);
+        while (keywordMatchesByURL.size() < MAXIMUM_URL_PATTERN_REACH &&
+                executors.getPoolSize() > 0 &&
+                collectivelyVisistedURLs.size() <
+                        MAX_COLLECTIVELY_VISITED_URL_COUNT)
         {
-            if (keywordMatchesByURL.containsKey(url)) {
-                continue;
-            }
-
-            try {
-                parsedUrl = new URL(url);
-            } catch (MalformedURLException e) {
-                e.printStackTrace();
-                continue;
-            }
-
-            results = ResultUtil.findKeywordsInHTMLResult(parsedUrl,
-                    keywords);
-            resultKeywords = (Map<String, Integer>) results.get(0);
-            resultURLs = (Set<String>) results.get(1);
-
-            if (!resultKeywords.isEmpty())
+            if (executors.getPoolSize() < MAXIMUM_WORKER_THREAD_COUNT &&
+                    executors.getQueue().size() > 0)
             {
-                keywordMatchesByURL.put(url, resultKeywords);
-            }
-
-            /*
-             * Keep track of the number of websites we've visited to obtain this
-             * result
-             */
-            if (!resultURLs.isEmpty())
-            {
-                urlSet.addAll(resultURLs);
-                urlsFoundInPageHTMLs.put(url, resultURLs);
-
-                for (String resultURL : resultURLs)
+                try
                 {
-                   if (urlsFoundCollectively.size() <=
-                           MAXIMUM_URL_PATTERN_REACH)
-                   {
-                       urlsFoundCollectively.add(resultURL);
-                   }
-                   else
-                   {
-                       maximumURLPatternReachMet = true;
-                       break loop;
-                   }
+                    executors.getQueue().take().run();
+                }
+                catch (InterruptedException e)
+                {
+                    e.printStackTrace();
                 }
             }
         }
 
-        if (!maximumURLPatternReachMet)
+        executors.shutdown();
+
+        while (!executors.isShutdown()) {}
+
+        // Calculate the time difference
+        minutes = (new Date().getTime() - date.getTime()) / (1000 * 60);
+
+        keywordMatchesByURL.forEach((k, v) -> keywordCountByURL
+                .put(k, v.values().stream().mapToInt(Number::intValue).sum()));
+
+        System.out.println("Strength of Keyword Matches by URL:");
+        System.out.println(MapUtil.sortByValue(keywordCountByURL));
+        System.out.println("Keyword Matches by URL:");
+        System.out.println(keywordMatchesByURL);
+        System.out.println("Minutes to completion: " + minutes);
+    }
+
+    public static void negotiateThreadAssignment(Set<String> urls)
+    {
+        Set<String> copyCollectivelyVistedURLs =
+                new HashSet<String>(collectivelyVisistedURLs);
+
+        urls.removeAll(copyCollectivelyVistedURLs);
+
+        if (!urls.isEmpty())
         {
-            findKeyWordsAndSpiderLinks(urlSet, keywords);
+            collectivelyVisistedURLs.addAll(urls);
+
+            WorkerThread worker = new WorkerThread()
+                    .setKeywords(KEYWORDS)
+                    .setInputURLs(urls)
+                    .setMaxURLPatternReach(MAXIMUM_URL_PATTERN_REACH)
+                    .setUrlContainsMatchPattern(URL_CONTAINS_MATCH_PATTERN)
+                    .setKeywordMatchesByURL(keywordMatchesByURL);
+
+            if (executors.getPoolSize() < executors.getMaximumPoolSize())
+            {
+                executors.execute(worker);
+            }
+            else
+            {
+                try
+                {
+                    executors.getQueue().put(worker);
+                }
+                catch (InterruptedException e)
+                {
+                    e.printStackTrace();
+                }
+            }
         }
     }
 }

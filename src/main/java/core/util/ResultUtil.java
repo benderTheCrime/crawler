@@ -48,13 +48,25 @@ public class ResultUtil
         try
         {
             html = RequestUtil.getHtmlFromURL(url);
-            htmlStream = new ByteArrayInputStream(html.getBody().getBytes());
         }
-        catch (UnirestException | IllegalArgumentException |
-                URISyntaxException | ClientProtocolException e)
+
+        /**
+         * Don't really care what error happens here...move on, plenty of fish
+         * in the sea
+         */
+        catch (Exception e)
         {
-            e.printStackTrace();
+            // e.printStackTrace();
             return resultsList;
+        }
+
+        if (html == null)
+        {
+            return resultsList;
+        }
+        else
+        {
+            htmlStream = new ByteArrayInputStream(html.getBody().getBytes());
         }
 
         try
@@ -63,7 +75,7 @@ public class ResultUtil
         }
         catch (IOException e)
         {
-            e.printStackTrace();
+            // e.printStackTrace();
         }
 
         body = document.text();
