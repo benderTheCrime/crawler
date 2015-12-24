@@ -43,16 +43,6 @@ public class Crawler
 
     public static void main(String args[])
     {
-        /*
-        TODO word boundaries
-        TODO string matcher
-        TODO separate concerns
-        TODO interface
-        TODO api
-        TODO not gracefully shutting down
-        TODO not showing count values
-        */
-
         Date date = new Date();
         Set<String> rootURLs = new HashSet<String>();
         String rootURL;
